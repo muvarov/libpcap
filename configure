@@ -659,6 +659,9 @@ AR
 RANLIB
 V_YACC
 V_LEX
+PCAP_SUPPORT_ODP
+ODP_LIB
+ODP_INCLS
 HAVE_LINUX_TPACKET_AUXDATA
 LIBOBJS
 EGREP
@@ -734,6 +737,9 @@ with_libnl
 enable_ipv6
 enable_optimizer_dbg
 enable_yydebug
+with_odp
+with_odp_includes
+with_odp_libraries
 with_dag
 with_dag_includes
 with_dag_libraries
@@ -1397,6 +1403,11 @@ Optional Packages:
   --with-pcap=TYPE        use packet capture TYPE
   --without-libnl         disable libnl support [default=yes, on Linux, if
                           present]
+  --with-odp[=DIR]        include ODP support ["yes", "no" or DIR;
+                          default="yes" on Linux if present]
+  --with-odp-includes=DIR ODP include directory
+  --with-odp-libraries=DIR
+                          ODP library directory
   --with-dag[=DIR]        include Endace DAG support ["yes", "no" or DIR;
                           default="yes" on BSD and Linux if present]
   --with-dag-includes=DIR Endace DAG include directory
@@ -6079,6 +6090,85 @@ $as_echo "#define YYDEBUG 1" >>confdefs.h
 fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: ${enable_yydebug-no}" >&5
 $as_echo "${enable_yydebug-no}" >&6; }
+
+# Check for ODP support.
+
+# Check whether --with-odp was given.
+if test "${with_odp+set}" = set; then :
+  withval=$with_odp;
+	if test "$withval" = no
+	then
+		# User doesn't want ODP support.
+		want_odp=no
+	elif test "$withval" = yes
+	then
+		# User wants ODP support but hasn't specified a directory.
+		want_odp=yes
+		ODP_ROOT=../../..
+	else
+		# User wants ODP support and has specified a directory, so use the provided value.
+		want_odp=yes
+		ODP_ROOT=$withval
+	fi
+
+else
+
+	#
+	# Use ODP API if present, otherwise don't
+	#
+	want_odp=ifpresent
+
+fi
+
+
+
+# Check whether --with-odp-includes was given.
+if test "${with_odp_includes+set}" = set; then :
+  withval=$with_odp_includes;
+	# User wants odp support and has specified a header directory, so use the provided value.
+	want_odp=yes
+	ODP_INCLS=$withval
+
+fi
+
+
+
+# Check whether --with-odp-libraries was given.
+if test "${with_odp_libraries+set}" = set; then :
+  withval=$with_odp_libraries;
+	# User wants odp support and has specified a library directory, so use the provided value.
+	want_odp=yes
+	ODP_LIB=$withval
+
+fi
+
+
+if test "$want_odp" = yes; then
+
+$as_echo "#define PCAP_SUPPORT_ODP 1" >>confdefs.h
+
+
+	# If necessary, set default paths for ODP API headers and libraries.
+	if test -z "$ODP_ROOT"; then
+	    ODP_ROOT="../../.."
+	fi
+
+	if test -z "$ODP_INCLS"; then
+		ODP_INCLS="-I$ODP_ROOT/build/include"
+	fi
+
+	if test -z "$ODP_LIB"; then
+		ODP_LIB="$ODP_ROOT/build/lib/libodp.a"
+	fi
+
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: ODP is supported" >&5
+$as_echo "$as_me: ODP is supported" >&6;}
+
+
+
+
+
+fi
 
 # Check for Endace DAG card support.
 

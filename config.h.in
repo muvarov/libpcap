@@ -253,6 +253,9 @@
 /* /dev/dlpi directory */
 #undef PCAP_DEV_PREFIX
 
+/* target host supports odp */
+#undef PCAP_SUPPORT_ODP
+
 /* target host supports Bluetooth sniffing */
 #undef PCAP_SUPPORT_BT
 

@@ -311,6 +311,9 @@ struct capture_source_type {
 	int (*findalldevs_op)(pcap_if_t **, char *);
 	pcap_t *(*create_op)(const char *, char *, int *);
 } capture_source_types[] = {
+#ifdef PCAP_SUPPORT_ODP
+	{ NULL, odp_create },
+#endif
 #ifdef HAVE_DAG_API
 	{ dag_findalldevs, dag_create },
 #endif
@@ -534,8 +537,83 @@ pcap_create_common(const char *source, char *ebuf, size_t size)
 	if (p == NULL)
 		return (NULL);
 
-	p->opt.source = strdup(source);
+#ifdef PCAP_SUPPORT_ODP
+	if (strstr(source, ",")) {
+		char *delim = ",";
+		p = pcap_alloc_pcap_t(ebuf, size);
+		if (p == NULL)
+			return (NULL);
+
+		p->opt.source = strdup(strtok((char *) source, delim));
+		if (p->opt.source == NULL) {
+			snprintf(ebuf, PCAP_ERRBUF_SIZE, "malloc: %s",
+					pcap_strerror(errno));
+			free(p);
+			return (NULL);
+		}
+		p->opt.destination = strdup(strtok(NULL, delim));
+		if (p->opt.destination == NULL) {
+			snprintf(ebuf, PCAP_ERRBUF_SIZE, "malloc: %s",
+			pcap_strerror(errno));
+			free(p);
+			return (NULL);
+		}
+	} else {
+#endif
+		p->opt.source = strdup(source);
+		if (p->opt.source == NULL) {
+			snprintf(ebuf, PCAP_ERRBUF_SIZE, "malloc: %s",
+			pcap_strerror(errno));
+			free(p);
+			return (NULL);
+		}
+#ifdef PCAP_SUPPORT_ODP
+	}
+#endif
+
+	/*
+	 * Default to "can't set rfmon mode"; if it's supported by
+	 * a platform, the create routine that called us can set
+	 * the op to its routine to check whether a particular
+	 * device supports it.
+	 */
+	p->can_set_rfmon_op = pcap_cant_set_rfmon;
+
+	initialize_ops(p);
+
+	/* put in some defaults*/
+	pcap_set_snaplen(p, 65535);	/* max packet size */
+	p->opt.timeout = 0;		/* no timeout specified */
+	p->opt.buffer_size = 0;		/* use the platform's default */
+	p->opt.promisc = 0;
+	p->opt.rfmon = 0;
+	p->opt.immediate = 0;
+	p->opt.tstamp_type = -1;	/* default to not setting time stamp type */
+	p->opt.tstamp_precision = PCAP_TSTAMP_PRECISION_MICRO;
+	return (p);
+}
+
+#ifdef PCAP_SUPPORT_ODP
+pcap_t *
+pcap_create_bridge(const char *device, char *ebuf, size_t size)
+{
+	pcap_t *p;
+	char *delim = ",";
+
+	p = pcap_alloc_pcap_t(ebuf, size);
+	if (p == NULL)
+		return (NULL);
+
+	p->opt.source = strdup(strtok((char *) device, delim));
 	if (p->opt.source == NULL) {
+		snprintf(ebuf, PCAP_ERRBUF_SIZE, "malloc: %s",
+				pcap_strerror(errno));
+		free(p);
+		return (NULL);
+	}
+
+	p->opt.destination = strdup(strtok(NULL, delim));
+	if (p->opt.destination == NULL) {
 		snprintf(ebuf, PCAP_ERRBUF_SIZE, "malloc: %s",
 		    pcap_strerror(errno));
 		free(p);
@@ -548,7 +626,7 @@ pcap_create_common(const char *source, char *ebuf, size_t size)
 	 * the op to its routine to check whether a particular
 	 * device supports it.
 	 */
-	p->can_set_rfmon_op = pcap_cant_set_rfmon;
+	p->can_set_rfmon_op = 0;
 
 	initialize_ops(p);
 
@@ -563,6 +641,7 @@ pcap_create_common(const char *source, char *ebuf, size_t size)
 	p->opt.tstamp_precision = PCAP_TSTAMP_PRECISION_MICRO;
 	return (p);
 }
+#endif /* PCAP_SUPPORT_ODP */
 
 int
 pcap_check_activated(pcap_t *p)

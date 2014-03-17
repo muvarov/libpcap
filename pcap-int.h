@@ -40,6 +40,13 @@
 extern "C" {
 #endif
 
+#ifdef PCAP_SUPPORT_ODP
+#include <odp.h>
+#include <helper/odp_linux.h>
+#include <helper/odp_eth.h>
+#include <helper/odp_ip.h>
+#endif /* PCAP_SUPPORT_ODP */
+
 #ifdef WIN32
 #include <Packet32.h>
 extern CRITICAL_SECTION g_PcapCompileCriticalSection;
@@ -106,6 +113,9 @@ extern CRITICAL_SECTION g_PcapCompileCriticalSection;
 #define MAXIMUM_SNAPLEN		262144
 
 struct pcap_opt {
+#ifdef PCAP_SUPPORT_ODP
+	char	*destination;
+#endif
 	char	*source;
 	int	timeout;	/* timeout for buffering */
 	int	buffer_size;
@@ -246,6 +256,13 @@ struct pcap {
 	getadapter_op_t getadapter_op;
 #endif
 	cleanup_op_t cleanup_op;
+
+#ifdef PCAP_SUPPORT_ODP
+	odp_pktio_t pktio;
+	odp_pktio_t pktio_second;
+	bool is_bridge;
+	bool is_netmap;
+#endif /* PCAP_SUPPORT_ODP */
 };
 
 /*
@@ -445,6 +462,11 @@ char	*pcap_win32strerror(void);
 int	install_bpf_program(pcap_t *, struct bpf_program *);
 
 int	pcap_strcasecmp(const char *, const char *);
+
+#ifdef PCAP_SUPPORT_ODP
+pcap_t* odp_create(const char *, char *, int *);
+pcap_t *pcap_create_bridge(const char *, char *, size_t);
+#endif
 
 #ifdef __cplusplus
 }

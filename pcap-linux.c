@@ -138,6 +138,17 @@
 #include <poll.h>
 #include <dirent.h>
 
+#ifdef PCAP_SUPPORT_ODP
+#include <sys/time.h>
+#define SHM_PKT_POOL_SIZE      (512*2048)
+#define SHM_PKT_POOL_BUF_SIZE  1856
+#endif /* PCAP_SUPPORT_ODP */
+
+#ifdef ODP_HAVE_NETMAP
+#include <helper/odp_linux.h>
+#include <odp_pktio_types.h>
+#endif
+
 #include "pcap-int.h"
 #include "pcap/sll.h"
 #include "pcap/vlan.h"
@@ -333,6 +344,12 @@ static int pcap_setfilter_linux(pcap_t *, struct bpf_program *);
 static int pcap_setdirection_linux(pcap_t *, pcap_direction_t);
 static int pcap_set_datalink_linux(pcap_t *, int);
 static void pcap_cleanup_linux(pcap_t *);
+#ifdef PCAP_SUPPORT_ODP
+static void pcap_odp_init(pcap_t *);
+static int pcap_activate_odp(pcap_t *);
+static int pcap_read_odp(pcap_t *, int, pcap_handler, u_char *);
+static void pcap_cleanup_odp(pcap_t *);
+#endif
 
 union thdr {
 	struct tpacket_hdr		*h1;
@@ -1053,7 +1070,6 @@ linux_if_drops(const char * if_name)
 	return dropped_pkts;
 } 
 
-
 /*
  * With older kernels promiscuous mode is kind of interesting because we
  * have to reset the interface before exiting. The problem can't really
@@ -1396,7 +1412,7 @@ pcap_activate_linux(pcap_t *handle)
 	 * "handle->fd" is a socket, so "select()" and "poll()"
 	 * should work on it.
 	 */
-	handle->selectable_fd = handle->fd;
+	handle->selectable_fd = -1;
 
 	return status;
 
@@ -2421,6 +2437,11 @@ pcap_setfilter_linux_common(pcap_t *handle, struct bpf_program *filter,
 			break;
 		}
 	}
+
+#ifdef PCAP_SUPPORT_ODP
+	/* ODP not yet support filtering_in_kernel */
+	can_filter_in_kernel = 0;
+#endif
 
 	/*
 	 * NOTE: at this point, we've set both the "len" and "filter"
@@ -6099,3 +6120,352 @@ reset_kernel_filter(pcap_t *handle)
 				   &dummy, sizeof(dummy));
 }
 #endif
+
+#ifdef PCAP_SUPPORT_ODP
+pcap_t *
+odp_create(const char *device, char *ebuf, int *is_ours)
+{
+	pcap_t *handle;
+
+	*is_ours = (!strncmp(device, "odp:", 4)
+		    || !strncmp(device, "b:", 2)
+		    || !strncmp(device, "netmapb:", 8)
+		    || !strncmp(device, "netmap:", 7)
+		    || !strncmp(device, "vale", 4));
+	if (! *is_ours)
+		return NULL;
+	if (!strncmp(device, "odp:", 4)) {
+		handle = pcap_create_common((device + 4), ebuf, sizeof(struct pcap_linux));
+		handle->is_bridge = false;
+		handle->is_netmap = false;
+	} else if (!strncmp(device, "b:", 2)) {
+		handle = pcap_create_common((device + 2), ebuf, sizeof(struct pcap_linux));
+		handle->is_bridge = true;
+		handle->is_netmap = false;
+		printf("bridge src: %s, dest: %s\n",
+				handle->opt.source, handle->opt.destination);
+#ifdef ODP_HAVE_NETMAP
+	} else if (!strncmp(device, "netmap:", 7)) {
+		handle = pcap_create_common((device + 7), ebuf, sizeof(struct pcap_linux));
+		handle->is_bridge = false;
+		handle->is_netmap = true;
+	} else if (!strncmp(device, "netmapb:", 8)) {
+		handle = pcap_create_common((device + 8), ebuf, sizeof(struct pcap_linux));
+		handle->is_bridge = true;
+		handle->is_netmap = true;
+		printf("bridge src: %s, dest: %s\n",
+				handle->opt.source, handle->opt.destination);
+#endif
+	} else {
+		handle = pcap_create_common(device, ebuf, sizeof(struct pcap_linux));
+		handle->is_bridge = false;
+		handle->is_netmap = false;
+	}
+	if (handle == NULL)
+		return NULL;
+
+	handle->activate_op = pcap_activate_odp;
+	return (handle);
+}
+
+static void
+pcap_odp_init(pcap_t *handle)
+{
+	int thr_id;
+	odp_buffer_pool_t pool;
+	odp_pktio_t pktio;
+	void *pool_base;
+	char inq_name[ODP_QUEUE_NAME_LEN];
+	odp_queue_t inq_def;
+	odp_queue_param_t qparam;
+	int fd;
+	int ret;
+
+	/* Init ODP before calling anything else */
+	if (odp_init_global()) {
+		fprintf(stderr, "Error: ODP global init failed.\n");
+		exit(EXIT_FAILURE);
+	}
+
+	/* Create thread structure for ODP */
+	thr_id = odp_thread_create(0);
+	odp_init_local(thr_id);
+
+	/* Is pool have been created in another theard ? */
+	pool = odp_buffer_pool_lookup("packet_pool");
+	if (pool == ODP_BUFFER_POOL_INVALID) {
+		/* Create packet pool */
+		pool_base = odp_shm_reserve("shm_packet_pool",
+				SHM_PKT_POOL_SIZE, ODP_CACHE_LINE_SIZE);
+		if (pool_base == NULL) {
+			fprintf(stderr,
+				"Error: packet pool mem alloc failed.\n");
+			exit(EXIT_FAILURE);
+		}
+
+		pool = odp_buffer_pool_create("packet_pool", pool_base,
+				SHM_PKT_POOL_SIZE,
+				SHM_PKT_POOL_BUF_SIZE,
+				ODP_CACHE_LINE_SIZE,
+				ODP_BUFFER_TYPE_PACKET);
+		if (pool == ODP_BUFFER_POOL_INVALID) {
+			fprintf(stderr, "Error: packet pool create failed.\n");
+			exit(EXIT_FAILURE);
+		}
+		odp_buffer_pool_print(pool);
+	} else {
+		fprintf(stdout, "packet pool have been created.\n");
+	}
+
+	/* Open a packet IO instance for this thread */
+	/* if any device, need ODP support */
+
+	/* for netmap */
+	odp_pktio_params_t pparams;
+#ifdef ODP_HAVE_NETMAP
+	if (handle->is_netmap) {
+		memset(&pparams.nm_params, 0, sizeof(pparams.nm_params));
+		pparams.nm_params.type = ODP_PKTIO_TYPE_NETMAP;
+		pparams.nm_params.netmap_mode = ODP_NETMAP_MODE_HW;
+		pparams.nm_params.ringid = 0;
+		printf("  pktio type: netmap\n");
+	} else {
+#endif
+		memset(&pparams.sock_params, 0, sizeof(pparams.sock_params));
+		pparams.sock_params.type = ODP_PKTIO_TYPE_SOCKET;
+		printf("  pktio type: socket\n");
+#ifdef ODP_HAVE_NETMAP
+	}
+#endif
+	handle->pktio = odp_pktio_open(handle->opt.source, pool, &pparams);
+
+	if (handle->pktio == ODP_QUEUE_INVALID) {
+		fprintf(stderr, "  Error: pktio create failed %s\n", handle->opt.source);
+		return;
+	}
+
+	/*
+	 * Create and set the default INPUT queue associated with the 'pktio'
+	 * resource
+	 */
+	qparam.sched.prio  = ODP_SCHED_PRIO_DEFAULT;
+	qparam.sched.sync  = ODP_SCHED_SYNC_NONE;
+	qparam.sched.group = ODP_SCHED_GROUP_DEFAULT;
+	snprintf(inq_name, sizeof(inq_name), "%i-pktio_inq_def",
+		 (int)handle->pktio);
+	inq_name[ODP_QUEUE_NAME_LEN - 1] = '\0';
+
+	inq_def = odp_queue_create(inq_name, ODP_QUEUE_TYPE_PKTIN, &qparam);
+	if (inq_def == ODP_QUEUE_INVALID) {
+		fprintf(stderr, "  Error: pktio queue creation failed\n");
+		return;
+	}
+
+	ret = odp_pktio_inq_setdef(handle->pktio, inq_def);
+	if (ret != 0) {
+		fprintf(stderr, "  Error: default input-Q setup\n");
+		return;
+	}
+
+	printf("  created pktio:%02i, queue mode\n"
+		"  default pktio%02i-INPUT queue:%u\n",
+		handle->pktio, handle->pktio, inq_def);
+
+	/* for bridge */
+	if (handle->is_bridge) {
+		handle->pktio_second = odp_pktio_open(handle->opt.destination, pool, &pparams);
+		snprintf(inq_name, sizeof(inq_name), "%i-pktio_inq_def", (int)handle->pktio_second);
+		inq_name[ODP_QUEUE_NAME_LEN - 1] = '\0';
+
+		inq_def = odp_queue_create(inq_name, ODP_QUEUE_TYPE_PKTIN, &qparam);
+		if (inq_def == ODP_QUEUE_INVALID) {
+			fprintf(stderr, "  Error: pktio queue creation failed\n");
+			return;
+		}
+
+		ret = odp_pktio_inq_setdef(handle->pktio_second, inq_def);
+		if (ret != 0) {
+			fprintf(stderr, "  Error: default input-Q setup\n");
+			return;
+		}
+
+		printf("  created pktio:%02i, queue mode\n"
+				"  default pktio%02i-INPUT queue:%u\n",
+				handle->pktio_second, handle->pktio_second, inq_def);
+	}
+}
+
+static int
+pcap_activate_odp(pcap_t *handle)
+{
+	struct pcap_linux *handlep = handle->priv;
+	const char	*device;
+	int		status = 0;
+	int		arptype;
+	struct ifreq	ifr;
+
+	/* initial ODP stuff */
+	pcap_odp_init(handle);
+
+	device = handle->opt.source;
+
+	handle->inject_op = pcap_inject_linux;
+	handle->setdirection_op = pcap_setdirection_linux;
+	handle->set_datalink_op = pcap_set_datalink_linux;
+	handle->setnonblock_op = pcap_setnonblock_fd;
+	handle->getnonblock_op = pcap_getnonblock_fd;
+	handle->cleanup_op = pcap_cleanup_odp;
+	handle->read_op = pcap_read_odp;
+	handle->setfilter_op = pcap_setfilter_linux;
+	handle->stats_op = pcap_stats_linux;
+
+	/*
+	 * The "any" device is a special device which causes us not
+	 * to bind to a particular device and thus to look at all
+	 * devices.
+	 */
+	if (strcmp(device, "any") == 0) {
+		if (handle->opt.promisc) {
+			handle->opt.promisc = 0;
+			/* Just a warning. */
+			snprintf(handle->errbuf, PCAP_ERRBUF_SIZE,
+				 "Promiscuous mode not supported on the \"any\" device");
+			status = PCAP_WARNING_PROMISC_NOTSUP;
+		}
+	}
+
+	handlep->device = strdup(device);
+	if (handlep->device == NULL) {
+		snprintf(handle->errbuf, PCAP_ERRBUF_SIZE, "strdup: %s",
+			 pcap_strerror(errno));
+		return PCAP_ERROR;
+	}
+
+	/* copy timeout value */
+	handlep->timeout = handle->opt.timeout;
+
+	/*
+	 * If we're in promiscuous mode, then we probably want
+	 * to see when the interface drops packets too, so get an
+	 * initial count from /proc/net/dev
+	 */
+	if (handle->opt.promisc)
+		handlep->proc_dropped = linux_if_drops(handlep->device);
+
+	/* + activate_new */
+	/* Will create a sock_fd just for setting */
+	status = activate_new(handle);
+	if (status < 0)
+		goto fail;
+
+	/* Allocate the buffer */
+	status = 0;
+	if (handle->opt.buffer_size != 0) {
+		/*
+		 * Set the socket buffer size to the specified value.
+		 */
+		if (setsockopt(handle->fd, SOL_SOCKET, SO_RCVBUF,
+			       &handle->opt.buffer_size,
+		    sizeof(handle->opt.buffer_size)) == -1) {
+			snprintf(handle->errbuf, PCAP_ERRBUF_SIZE,
+				 "SO_RCVBUF: %s", pcap_strerror(errno));
+			status = PCAP_ERROR;
+			goto fail;
+		}
+	}
+
+	handle->buffer = malloc(handle->bufsize + handle->offset);
+	if (!handle->buffer) {
+		snprintf(handle->errbuf, PCAP_ERRBUF_SIZE,
+			 "malloc: %s", pcap_strerror(errno));
+		status = PCAP_ERROR;
+		goto fail;
+	}
+
+	handle->selectable_fd = handle->fd;
+	/* - activate_new */
+
+	return status;
+
+fail:
+	pcap_cleanup_linux(handle);
+	return status;
+}
+
+static int
+pcap_read_odp(pcap_t *handle, int max_packets, pcap_handler callback,
+	      u_char *userdata)
+{
+	odp_packet_t pkt;
+	odp_buffer_t buf;
+	u_char *bp;
+	struct pcap_linux *handlep = handle->priv;
+	struct pcap_pkthdr pcap_header;
+	struct timeval ts;
+	long n = 1;
+
+	for (n = 1; (n <= max_packets) || (max_packets < 0); n++) {
+		/* Use schedule to get buf from any input queue */
+		buf = odp_schedule(NULL);
+		/* fill out pcap_header */
+		gettimeofday(&ts, NULL);
+		pcap_header.ts = ts;
+
+		pkt = odp_packet_from_buffer(buf);
+		bp = odp_packet_l2(pkt);
+		pcap_header.len	= odp_packet_get_len(pkt);
+		pcap_header.caplen = pcap_header.len;
+
+		/* ODP not yet support filtering_in_kernel */
+		if (handlep->filter_in_userland && handle->fcode.bf_insns) {
+			if (bpf_filter(handle->fcode.bf_insns, bp,
+				       pcap_header.len,
+				       pcap_header.caplen) == 0) {
+				/* rejected by filter */
+				n--;
+				goto clean_buf;
+			}
+		}
+
+		callback(userdata, &pcap_header, bp);
+
+		/* for bridge */
+		if (handle->is_bridge) {
+			odp_pktio_t pktio_tmp;
+			odp_queue_t outq;
+			pktio_tmp = odp_pktio_get_input(pkt);
+			printf("ODP: from pktio %d\n", pktio_tmp);
+			if (pktio_tmp == handle->pktio) {
+				printf("ODP: to pktio %d\n", handle->pktio_second);
+				outq = odp_pktio_outq_getdef(handle->pktio_second);
+			} else if (pktio_tmp == handle->pktio_second) {
+				printf("ODP: to pktio %d\n", handle->pktio);
+				outq = odp_pktio_outq_getdef(handle->pktio);
+			} else {
+				printf("ODP: Unknown pktio\n");
+				goto clean_buf;
+			}
+			odp_queue_enq(outq, buf);
+		}
+clean_buf:
+		handlep->packets_read++;
+		odp_buffer_free(buf);
+
+		if (handle->break_loop) {
+			handle->break_loop = 0;
+			return PCAP_ERROR_BREAK;
+		}
+	}
+
+	return max_packets;
+}
+
+static void
+pcap_cleanup_odp(pcap_t *handle)
+{
+	odp_pktio_close(handle->pktio);
+	if (handle->is_bridge)
+		odp_pktio_close(handle->pktio_second);
+	pcap_cleanup_linux(handle);
+}
+#endif /* PCAP_SUPPORT_ODP */
