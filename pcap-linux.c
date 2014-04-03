@@ -6232,7 +6232,8 @@ pcap_odp_init(pcap_t *handle)
 	} else {
 #endif
 		memset(&pparams.sock_params, 0, sizeof(pparams.sock_params));
-		pparams.sock_params.type = ODP_PKTIO_TYPE_SOCKET;
+		pparams.sock_params.type = ODP_PKTIO_TYPE_SOCKET_BASIC;
+		pparams.sock_params.fanout = 0;
 		printf("  pktio type: socket\n");
 #ifdef ODP_HAVE_NETMAP
 	}
