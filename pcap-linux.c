@@ -6250,7 +6250,7 @@ pcap_odp_init(pcap_t *handle)
 	 * resource
 	 */
 	qparam.sched.prio  = ODP_SCHED_PRIO_DEFAULT;
-	qparam.sched.sync  = ODP_SCHED_SYNC_NONE;
+	qparam.sched.sync  = ODP_SCHED_SYNC_ATOMIC;
 	qparam.sched.group = ODP_SCHED_GROUP_DEFAULT;
 	snprintf(inq_name, sizeof(inq_name), "%i-pktio_inq_def",
 		 (int)handle->pktio);
@@ -6407,7 +6407,7 @@ pcap_read_odp(pcap_t *handle, int max_packets, pcap_handler callback,
 
 	for (n = 1; (n <= max_packets) || (max_packets < 0); n++) {
 		/* Use schedule to get buf from any input queue */
-		buf = odp_schedule(NULL);
+		buf = odp_schedule(NULL, ODP_SCHED_WAIT);
 		/* fill out pcap_header */
 		gettimeofday(&ts, NULL);
 		pcap_header.ts = ts;
