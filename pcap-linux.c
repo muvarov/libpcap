@@ -1412,7 +1412,7 @@ pcap_activate_linux(pcap_t *handle)
 	 * "handle->fd" is a socket, so "select()" and "poll()"
 	 * should work on it.
 	 */
-	handle->selectable_fd = -1;
+	handle->selectable_fd = handle->fd;
 
 	return status;
 
@@ -6137,11 +6137,13 @@ odp_create(const char *device, char *ebuf, int *is_ours)
 		return NULL;
 	if (!strncmp(device, "odp:", 4)) {
 		handle = pcap_create_common((device + 4), ebuf, sizeof(struct pcap_linux));
+		handle->selectable_fd = -1;
 		podp = handle->priv;
 		podp->is_bridge = false;
 		podp->is_netmap = false;
 	} else if (!strncmp(device, "b:", 2)) {
 		handle = pcap_create_common((device + 2), ebuf, sizeof(struct pcap_linux));
+		handle->selectable_fd = -1;
 		podp->is_bridge = true;
 		podp->is_netmap = false;
 		printf("bridge src: %s, dest: %s\n",
@@ -6149,10 +6151,12 @@ odp_create(const char *device, char *ebuf, int *is_ours)
 #ifdef ODP_HAVE_NETMAP
 	} else if (!strncmp(device, "netmap:", 7)) {
 		handle = pcap_create_common((device + 7), ebuf, sizeof(struct pcap_linux));
+		handle->selectable_fd = -1;
 		podp->is_bridge = false;
 		podp->is_netmap = true;
 	} else if (!strncmp(device, "netmapb:", 8)) {
 		handle = pcap_create_common((device + 8), ebuf, sizeof(struct pcap_linux));
+		handle->selectable_fd = -1;
 		podp->is_bridge = true;
 		podp->is_netmap = true;
 		printf("bridge src: %s, dest: %s\n",
@@ -6160,6 +6164,7 @@ odp_create(const char *device, char *ebuf, int *is_ours)
 #endif
 	} else {
 		handle = pcap_create_common(device, ebuf, sizeof(struct pcap_linux));
+		handle->selectable_fd = -1;
 		podp->is_bridge = false;
 		podp->is_netmap = false;
 	}
