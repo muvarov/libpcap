@@ -540,7 +540,7 @@ pcap_create_common(const char *source, char *ebuf, size_t size)
 #ifdef PCAP_SUPPORT_ODP
 	if (strstr(source, ",")) {
 		char *delim = ",";
-		p = pcap_alloc_pcap_t(ebuf, size);
+		p = pcap_alloc_pcap_t(ebuf, size + sizeof(struct pcap_odp));
 		if (p == NULL)
 			return (NULL);
 

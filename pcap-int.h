@@ -144,6 +144,15 @@ typedef Adapter *(*getadapter_op_t)(pcap_t *);
 #endif
 typedef void	(*cleanup_op_t)(pcap_t *);
 
+#ifdef PCAP_SUPPORT_ODP
+struct pcap_odp {
+	odp_pktio_t pktio;
+	odp_pktio_t pktio_second;
+	bool is_bridge;
+	bool is_netmap;
+};
+#endif /* PCAP_SUPPORT_ODP */
+
 /*
  * We put all the stuff used in the read code path at the beginning,
  * to try to keep it together in the same cache line or lines.
@@ -256,13 +265,6 @@ struct pcap {
 	getadapter_op_t getadapter_op;
 #endif
 	cleanup_op_t cleanup_op;
-
-#ifdef PCAP_SUPPORT_ODP
-	odp_pktio_t pktio;
-	odp_pktio_t pktio_second;
-	bool is_bridge;
-	bool is_netmap;
-#endif /* PCAP_SUPPORT_ODP */
 };
 
 /*
