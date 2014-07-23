@@ -148,7 +148,6 @@ typedef void	(*cleanup_op_t)(pcap_t *);
 struct pcap_odp {
 	odp_pktio_t pktio;
 	odp_pktio_t pktio_second;
-	bool is_bridge;
 	bool is_netmap;
 };
 #endif /* PCAP_SUPPORT_ODP */
@@ -467,7 +466,6 @@ int	pcap_strcasecmp(const char *, const char *);
 
 #ifdef PCAP_SUPPORT_ODP
 pcap_t* odp_create(const char *, char *, int *);
-pcap_t *pcap_create_bridge(const char *, char *, size_t);
 #endif
 
 #ifdef __cplusplus

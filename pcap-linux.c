@@ -6139,37 +6139,18 @@ odp_create(const char *device, char *ebuf, int *is_ours)
 		handle = pcap_create_common((device + 4), ebuf, sizeof(struct pcap_linux));
 		handle->selectable_fd = -1;
 		podp = handle->priv;
-		podp->is_bridge = false;
 		podp->is_netmap = false;
-	} else if (!strncmp(device, "b:", 2)) {
-		handle = pcap_create_common((device + 2), ebuf, sizeof(struct pcap_linux));
-		handle->selectable_fd = -1;
-		podp = handle->priv;
-		podp->is_bridge = true;
-		podp->is_netmap = false;
-		printf("bridge src: %s, dest: %s\n",
-				handle->opt.source, handle->opt.destination);
 #ifdef ODP_HAVE_NETMAP
 	} else if (!strncmp(device, "netmap:", 7)) {
 		handle = pcap_create_common((device + 7), ebuf, sizeof(struct pcap_linux));
 		handle->selectable_fd = -1;
 		podp = handle->priv;
-		podp->is_bridge = false;
 		podp->is_netmap = true;
-	} else if (!strncmp(device, "netmapb:", 8)) {
-		handle = pcap_create_common((device + 8), ebuf, sizeof(struct pcap_linux));
-		handle->selectable_fd = -1;
-		podp = handle->priv;
-		podp->is_bridge = true;
-		podp->is_netmap = true;
-		printf("bridge src: %s, dest: %s\n",
-				handle->opt.source, handle->opt.destination);
 #endif
 	} else {
 		handle = pcap_create_common(device, ebuf, sizeof(struct pcap_linux));
 		handle->selectable_fd = -1;
 		podp = handle->priv;
-		podp->is_bridge = false;
 		podp->is_netmap = false;
 	}
 	if (handle == NULL)
@@ -6285,28 +6266,6 @@ pcap_odp_init(pcap_t *handle)
 		"  default pktio%02i-INPUT queue:%u\n",
 		podp->pktio, podp->pktio, inq_def);
 
-	/* for bridge */
-	if (podp->is_bridge) {
-		podp->pktio_second = odp_pktio_open(handle->opt.destination, pool, &pparams);
-		snprintf(inq_name, sizeof(inq_name), "%i-pktio_inq_def", (int)podp->pktio_second);
-		inq_name[ODP_QUEUE_NAME_LEN - 1] = '\0';
-
-		inq_def = odp_queue_create(inq_name, ODP_QUEUE_TYPE_PKTIN, &qparam);
-		if (inq_def == ODP_QUEUE_INVALID) {
-			fprintf(stderr, "  Error: pktio queue creation failed\n");
-			return;
-		}
-
-		ret = odp_pktio_inq_setdef(podp->pktio_second, inq_def);
-		if (ret != 0) {
-			fprintf(stderr, "  Error: default input-Q setup\n");
-			return;
-		}
-
-		printf("  created pktio:%02i, queue mode\n"
-				"  default pktio%02i-INPUT queue:%u\n",
-				podp->pktio_second, podp->pktio_second, inq_def);
-	}
 }
 
 static int
@@ -6444,24 +6403,6 @@ pcap_read_odp(pcap_t *handle, int max_packets, pcap_handler callback,
 
 		callback(userdata, &pcap_header, bp);
 
-		/* for bridge */
-		if (podp->is_bridge) {
-			odp_pktio_t pktio_tmp;
-			odp_queue_t outq;
-			pktio_tmp = odp_pktio_get_input(pkt);
-			printf("ODP: from pktio %d\n", pktio_tmp);
-			if (pktio_tmp == podp->pktio) {
-				printf("ODP: to pktio %d\n", podp->pktio_second);
-				outq = odp_pktio_outq_getdef(podp->pktio_second);
-			} else if (pktio_tmp == podp->pktio_second) {
-				printf("ODP: to pktio %d\n", podp->pktio);
-				outq = odp_pktio_outq_getdef(podp->pktio);
-			} else {
-				printf("ODP: Unknown pktio\n");
-				goto clean_buf;
-			}
-			odp_queue_enq(outq, buf);
-		}
 clean_buf:
 		handlep->packets_read++;
 		odp_buffer_free(buf);
@@ -6481,8 +6422,6 @@ pcap_cleanup_odp(pcap_t *handle)
 	struct pcap_odp *podp = handle->priv;
 
 	odp_pktio_close(podp->pktio);
-	if (podp->is_bridge)
-		odp_pktio_close(podp->pktio_second);
 	pcap_cleanup_linux(handle);
 }
 #endif /* PCAP_SUPPORT_ODP */
