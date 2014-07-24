@@ -718,6 +718,7 @@ enable_ipv6
 enable_optimizer_dbg
 enable_yydebug
 with_odp
+with_odp_netmap
 with_odp_includes
 with_odp_libdir
 with_dag
@@ -1386,6 +1387,7 @@ Optional Packages:
   --without-libnl         disable libnl support [default=yes, on Linux, if
                           present]
   --with-odp              include ODP support
+  --with-odp-netmap       include ODP netmap support
   --with-odp-includes=DIR ODP include directory
   --with-odp-libdir=DIR   ODP library directory
   --with-dag[=DIR]        include Endace DAG support ["yes", "no" or DIR;
@@ -6087,6 +6089,21 @@ fi
 
 
 
+# Check whether --with-odp-netmap was given.
+if test "${with_odp_netmap+set}" = set; then :
+  withval=$with_odp_netmap;
+	if test ! "x$withval" = "xno" ; then
+		want_odp_netmap=yes
+	fi
+
+else
+
+	want_odp_netmap=no
+
+fi
+
+
+
 # Check whether --with-odp-includes was given.
 if test "${with_odp_includes+set}" = set; then :
   withval=$with_odp_includes;
@@ -6111,6 +6128,11 @@ if test "$want_odp" = yes; then
 $as_echo "#define PCAP_SUPPORT_ODP 1" >>confdefs.h
 
 
+	if test "$want_odp_netmap" = yes; then
+
+$as_echo "#define ODP_HAVE_NETMAP 1" >>confdefs.h
+
+	fi
 	LIBS="$LIBS -lodp"
 	{ $as_echo "$as_me:${as_lineno-$LINENO}: ODP is supported" >&5
 $as_echo "$as_me: ODP is supported" >&6;}
