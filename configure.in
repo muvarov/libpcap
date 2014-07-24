@@ -708,6 +708,16 @@ AC_HELP_STRING([--with-odp],[include ODP support]),
 	want_odp=no
 ])
 
+AC_ARG_WITH([odp-netmap],
+AC_HELP_STRING([--with-odp-netmap],[include ODP netmap support]),
+[
+	if test ! "x$withval" = "xno" ; then
+		want_odp_netmap=yes
+	fi
+],[
+	want_odp_netmap=no
+])
+
 AC_ARG_WITH([odp-includes],
 AC_HELP_STRING([--with-odp-includes=DIR],[ODP include directory]),
 [
@@ -725,6 +735,9 @@ AC_HELP_STRING([--with-odp-libdir=DIR],[ODP library directory]),
 if test "$want_odp" = yes; then
 	AC_DEFINE(PCAP_SUPPORT_ODP, 1, [target host supports odp])
 
+	if test "$want_odp_netmap" = yes; then
+		AC_DEFINE(ODP_HAVE_NETMAP, 1, [target host supports netmap odp])
+	fi
 	LIBS="$LIBS -lodp"
 	AC_MSG_NOTICE(ODP is supported)
 	AC_SUBST(ODP_INCLS)
