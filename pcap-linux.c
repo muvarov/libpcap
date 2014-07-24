@@ -6129,8 +6129,6 @@ odp_create(const char *device, char *ebuf, int *is_ours)
 	struct pcap_odp *podp;
 
 	*is_ours = (!strncmp(device, "odp:", 4)
-		    || !strncmp(device, "b:", 2)
-		    || !strncmp(device, "netmapb:", 8)
 		    || !strncmp(device, "netmap:", 7)
 		    || !strncmp(device, "vale", 4));
 	if (! *is_ours)
