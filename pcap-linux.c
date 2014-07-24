@@ -6381,11 +6381,14 @@ pcap_read_odp(pcap_t *handle, int max_packets, pcap_handler callback,
 	for (n = 1; (n <= max_packets) || (max_packets < 0); n++) {
 		/* Use schedule to get buf from any input queue */
 		buf = odp_schedule(NULL, ODP_SCHED_WAIT);
+
+		pkt = odp_packet_from_buffer(buf);
+		if (odp_unlikely(odp_packet_error(pkt)))
+			goto clean_buf; /* Drop */
+
 		/* fill out pcap_header */
 		gettimeofday(&ts, NULL);
 		pcap_header.ts = ts;
-
-		pkt = odp_packet_from_buffer(buf);
 		bp = odp_packet_l2(pkt);
 		pcap_header.len	= odp_packet_get_len(pkt);
 		pcap_header.caplen = pcap_header.len;
